@@ -25,7 +25,18 @@ Resources:
         deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
         maxReceiveCount: 3
 
-  # DEAD LETTER QUEUE
+  CancelOrderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: CancelOrderQueue
+      DelaySeconds: 0
+      VisibilityTimeout: 10
+      MessageRetentionPeriod: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  # DEAD LETTER QUEUE - Common for all flow queues
   DeadLetterQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -37,7 +48,7 @@ Resources:
     Properties:
       CodeUri: lambdas/
       Handler: create-order.handler
-      Policies:
+      Policies: # This policy gives the ability to send event bridge events
         - Statement:
             - Effect: Allow
               Resource: "*"
@@ -56,6 +67,30 @@ Resources:
           Type: SQS
           Properties:
             Queue: !GetAtt CreateOrderQueue.Arn
+  CancelOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: cancel-order.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Resource: "*"
+              Action:
+                - events:PutEvents
+  CancelOrderFailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: event-fail-cancel.handler
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt CancelOrderQueue.QueueName
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CancelOrderQueue.Arn
   CommonFailuresFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -77,13 +112,26 @@ Resources:
       Description: "Event rule for new orders"
       EventPattern:
         source:
-          - "double-event-bridge-sqs-create"
+          - "double-event-bridge-sqs-create" # This value must be taken into account in the lambda, when sending the event
         detail-type:
           - "create-order"
       State: "ENABLED"
       Targets:
         - Arn: !GetAtt CreateOrderQueue.Arn
           Id: "CreateOrderQueue"
+  CancelOrderEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Event rule for cancel orders"
+      EventPattern:
+        source:
+          - "double-event-bridge-sqs-cancel"
+        detail-type:
+          - "cancel-order"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt CancelOrderQueue.Arn
+          Id: "CancelOrderQueue"
 
   # EVENT BRIDGE TO SQS POLICY
   EventBridgeToToSqsPolicy:
@@ -96,5 +144,11 @@ Resources:
               Service: events.amazonaws.com
             Action: SQS:SendMessage
             Resource: !GetAtt CreateOrderQueue.Arn
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt CancelOrderQueue.Arn
       Queues:
         - !Ref CreateOrderQueue
+        - !Ref CancelOrderQueue
