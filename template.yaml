@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  double-event-bridge-sqs-dlq-example
+
+  Sample SAM Template for double-event-bridge-sqs-dlq-example
+
+Globals:
+  Function:
+    Runtime: nodejs14.x
+    Architectures:
+      - x86_64
+    Timeout: 10
+
+Resources:
+  # QUEUES
+  CreateOrderQueue:
+    Type: AWS::SQS::Queue
+    Properties: # Cannot use a fifo queue as an event bridge target apparently
+      QueueName: CreateOrderQueue
+      DelaySeconds: 0
+      VisibilityTimeout: 10
+      MessageRetentionPeriod: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  # DEAD LETTER QUEUE
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: DeadLetterQueue
+
+  # LAMBDAS
+  CreateOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: create-order.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Resource: "*"
+              Action:
+                - events:PutEvents
+  CreateOrderFailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: event-fail-create.handler
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt CreateOrderQueue.QueueName
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CreateOrderQueue.Arn
+  CommonFailuresFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambdas/
+      Handler: common-failures.handler
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: !GetAtt DeadLetterQueue.QueueName
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt DeadLetterQueue.Arn
+
+  # EVENT BRIDGE TO SQS CONNECTION
+  NewOrderEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Event rule for new orders"
+      EventPattern:
+        source:
+          - "double-event-bridge-sqs-create"
+        detail-type:
+          - "create-order"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt CreateOrderQueue.Arn
+          Id: "CreateOrderQueue"
+
+  # EVENT BRIDGE TO SQS POLICY
+  EventBridgeToToSqsPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: SQS:SendMessage
+            Resource: !GetAtt CreateOrderQueue.Arn
+      Queues:
+        - !Ref CreateOrderQueue

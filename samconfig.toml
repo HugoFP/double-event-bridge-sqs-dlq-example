@@ -1,0 +1,11 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "double-event-bridge-sqs-dlq-example"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-yv4lwbh7024x"
+s3_prefix = "double-event-bridge-sqs-dlq-example"
+region = "us-east-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = []
